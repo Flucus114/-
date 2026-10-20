@@ -8,22 +8,31 @@ jobs:
 
       - name: Extrair o zip
         run: |
-          ls -la
           ZIP=$(find . -maxdepth 2 -iname "*.zip" -not -path "./.git/*" | head -n 1)
-          if [ -z "$ZIP" ]; then echo "Nenhum .zip encontrado no repositório"; exit 1; fi
+          if [ -z "$ZIP" ]; then echo "Nenhum .zip encontrado"; exit 1; fi
           echo "Usando: $ZIP"
-          mkdir -p proj
+          rm -rf proj work
+          mkdir proj
           unzip -o "$ZIP" -d proj
-          if [ ! -d proj/src ] && [ "$(ls -1 proj | wc -l)" = "1" ]; then
-            mv proj/*/* proj/
+          SM=$(find proj -type d -path '*/src/main' | head -n 1)
+          if [ -z "$SM" ]; then
+            echo "ERRO: nao achei src/main dentro do zip. Estrutura do zip:"
+            find proj -maxdepth 4 | head -80
+            exit 1
           fi
-          ls proj
+          mv "${SM%/src/main}" work
+          echo "Estrutura do projeto:"
+          find work -maxdepth 6 -name "*.java" | head -40
 
       - name: Corrigir Net.java
-        working-directory: proj
+        working-directory: work
         run: |
-          python3 - <<'PY'
-          p='src/main/java/dev/ironorigins/net/Net.java'
+          NET=$(find . -name Net.java | head -n 1)
+          if [ -z "$NET" ]; then echo "Net.java nao existe, pulando"; exit 0; fi
+          echo "Net.java em: $NET"
+          NET="$NET" python3 - <<'PY'
+          import os
+          p=os.environ['NET']
           s=open(p).read()
           old='new ArrayList<>(b.readCollection(ArrayList::new, buf -> buf.readUtf(64)))'
           new='b.<String, ArrayList<String>>readCollection(ArrayList::new, buf -> buf.readUtf(64))'
@@ -32,7 +41,7 @@ jobs:
           PY
 
       - name: Corrigir settings.gradle e build.gradle
-        working-directory: proj
+        working-directory: work
         run: |
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -63,22 +72,3 @@ jobs:
               implementation fg.deobf('maven.modrinth:s4OWxYQQ:T1VAZjU6')
           }
           tasks.named('jar') { finalizedBy 'reobfJar' }
-          EOF
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: 8.1.1
-
-      - name: Build
-        working-directory: proj
-        run: gradle build
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ironorigins-jar
-          path: proj/build/libs/*.jar
