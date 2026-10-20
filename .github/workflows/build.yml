@@ -1,0 +1,84 @@
+name: build
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extrair o zip
+        run: |
+          ls -la
+          ZIP=$(find . -maxdepth 2 -iname "*.zip" -not -path "./.git/*" | head -n 1)
+          if [ -z "$ZIP" ]; then echo "Nenhum .zip encontrado no repositório"; exit 1; fi
+          echo "Usando: $ZIP"
+          mkdir -p proj
+          unzip -o "$ZIP" -d proj
+          if [ ! -d proj/src ] && [ "$(ls -1 proj | wc -l)" = "1" ]; then
+            mv proj/*/* proj/
+          fi
+          ls proj
+
+      - name: Corrigir Net.java
+        working-directory: proj
+        run: |
+          python3 - <<'PY'
+          p='src/main/java/dev/ironorigins/net/Net.java'
+          s=open(p).read()
+          old='new ArrayList<>(b.readCollection(ArrayList::new, buf -> buf.readUtf(64)))'
+          new='b.<String, ArrayList<String>>readCollection(ArrayList::new, buf -> buf.readUtf(64))'
+          print('trecho encontrado' if old in s else 'AVISO: trecho nao encontrado')
+          open(p,'w').write(s.replace(old,new))
+          PY
+
+      - name: Corrigir settings.gradle e build.gradle
+        working-directory: proj
+        run: |
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  gradlePluginPortal()
+                  maven { name = 'MinecraftForge'; url = 'https://maven.minecraftforge.net/' }
+              }
+          }
+          rootProject.name = 'ironorigins'
+          EOF
+          cat > build.gradle <<'EOF'
+          plugins { id 'java'; id 'net.minecraftforge.gradle' version '[6.0.16,6.2)' }
+          version = '0.1.0'
+          group = 'dev.ironorigins'
+          base { archivesName = 'ironorigins-1.20.1' }
+          java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+          minecraft { mappings channel: 'official', version: '1.20.1' }
+          repositories {
+              maven { url 'https://maven.minecraftforge.net/' }
+              exclusiveContent {
+                  forRepository { maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' } }
+                  forRepositories(fg.repository)
+                  filter { includeGroup 'maven.modrinth' }
+              }
+          }
+          dependencies {
+              minecraft 'net.minecraftforge:forge:1.20.1-47.3.0'
+              implementation fg.deobf('maven.modrinth:s4OWxYQQ:T1VAZjU6')
+          }
+          tasks.named('jar') { finalizedBy 'reobfJar' }
+          EOF
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.1.1
+
+      - name: Build
+        working-directory: proj
+        run: gradle build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ironorigins-jar
+          path: proj/build/libs/*.jar
